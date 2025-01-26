@@ -6,8 +6,15 @@ import json
 import sys 
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 
-url = "http://127.0.0.1:8080/"
+
+urls = [
+    "http://127.0.0.1:8001/",
+    "http://127.0.0.1:8002/",
+    "http://127.0.0.1:8003/",
+    "http://127.0.0.1:8004/"
+]
 
 chat_template_library = [
     ("sports_category_extraction",[
@@ -37,7 +44,7 @@ instruction_library =[
 
 
 
-def get_num_tokens(query)->int:
+def get_num_tokens(query,url)->int:
     response = requests.post(url+"tokenize",json={"content":query})
 
     tokens = response.json()
@@ -51,7 +58,7 @@ def run_concurrent_queries(queries, max_workers=12):
     
     results = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(get_num_tokens, query) for query in queries]
+        futures = [executor.submit(get_num_tokens, query, urls[idx]) for idx, query in enumerate(queries)]
 
         for future in as_completed(futures):
             result = future.result()
@@ -62,7 +69,7 @@ def run_concurrent_queries(queries, max_workers=12):
 
 token_count_per_instruction = run_concurrent_queries(map(lambda pair: pair[1],instruction_library))
 
-def get_entities(query, key, chat, instruction, num_tokens):
+def get_entities(query, url, key, chat, instruction, num_tokens):
     prompt = str()
     prompt += instruction
     prompt += " "
@@ -82,7 +89,7 @@ def get_entities(query, key, chat, instruction, num_tokens):
             "top_p": 0.9,
             "n_keep": num_tokens,
             "n_predict": 2,
-            "cache_prompt": True,
+            "cache_prompt": False,
             "stop": ["\n### Human:"],
             "stream": True}
 
@@ -96,7 +103,7 @@ def get_entities(query, key, chat, instruction, num_tokens):
 
     return (key,output)
 
-def extract_entities_concurrently(query, chats, instructions, token_counts_per_instruction, max_workers=12):
+def extract_entities_concurrently(query, urls, chats, instructions, token_counts_per_instruction, max_workers=12):
     keys = []
     chat_instruction_pair = []
     for chat, instruction in zip(chats, instructions):
@@ -107,7 +114,7 @@ def extract_entities_concurrently(query, chats, instructions, token_counts_per_i
 
     results = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(get_entities, query, keys[idx], 
+        futures = [executor.submit(get_entities, query, urls[idx], keys[idx], 
                                    chat , instruction, 
                                    token_counts_per_instruction[idx]) for idx,(chat , instruction) in enumerate(chat_instruction_pair)]
 
@@ -121,6 +128,9 @@ def extract_entities_concurrently(query, chats, instructions, token_counts_per_i
 if __name__ == "__main__":
     for line in sys.stdin:
         q = line.strip()
-        entities = extract_entities_concurrently(q, chat_template_library, 
+        start = time.time()
+        entities = extract_entities_concurrently(q,urls, chat_template_library, 
                                                  instruction_library, token_count_per_instruction)
+        end = time.time()
         print(entities)
+        print(f"elapsed time: {end-start}")
